@@ -1,0 +1,80 @@
+/**
+ * Álbum de boda: subida privada a Google Drive.
+ * Configura los valores de CONFIG antes de publicar la aplicación.
+ */
+const CONFIG = {
+  EVENT_NAME: 'Nuestra boda',
+  DRIVE_FOLDER_ID: 'PEGA_AQUI_EL_ID_DE_LA_CARPETA',
+  MAX_FILE_MB: 8,
+  MAX_FILES_PER_UPLOAD: 10,
+  ACCEPTING_UPLOADS: true
+};
+
+const ALLOWED_MIME_TYPES = new Set([
+  'image/jpeg', 'image/png', 'image/webp', 'image/gif',
+  'image/heic', 'image/heif', 'image/tiff', 'image/bmp'
+]);
+
+function doGet() {
+  return HtmlService.createHtmlOutputFromFile('Index')
+    .setTitle('Fotos de ' + CONFIG.EVENT_NAME)
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1');
+}
+
+function getPublicConfig() {
+  return {
+    eventName: CONFIG.EVENT_NAME,
+    maxFileMb: CONFIG.MAX_FILE_MB,
+    maxFiles: CONFIG.MAX_FILES_PER_UPLOAD,
+    acceptingUploads: CONFIG.ACCEPTING_UPLOADS
+  };
+}
+
+function uploadPhoto(payload) {
+  if (!CONFIG.ACCEPTING_UPLOADS) {
+    throw new Error('La recogida de fotos está cerrada.');
+  }
+  if (!CONFIG.DRIVE_FOLDER_ID || CONFIG.DRIVE_FOLDER_ID.indexOf('PEGA_AQUI') === 0) {
+    throw new Error('La carpeta de Drive aún no está configurada.');
+  }
+  if (!payload || typeof payload !== 'object') {
+    throw new Error('No se recibió una foto válida.');
+  }
+
+  const guestName = cleanText(payload.guestName, 60);
+  const originalName = cleanFileName(payload.fileName);
+  const mimeType = String(payload.mimeType || '').toLowerCase();
+  const base64 = String(payload.base64 || '');
+
+  if (!guestName) throw new Error('Escribe tu nombre antes de subir las fotos.');
+  if (!ALLOWED_MIME_TYPES.has(mimeType)) {
+    throw new Error('Formato no admitido. Sube una imagen JPG, PNG, HEIC o WebP.');
+  }
+  if (!base64 || !/^[A-Za-z0-9+/]+=*$/.test(base64)) {
+    throw new Error('El archivo recibido no parece una imagen válida.');
+  }
+
+  const bytes = Utilities.base64Decode(base64);
+  const maxBytes = CONFIG.MAX_FILE_MB * 1024 * 1024;
+  if (bytes.length > maxBytes) {
+    throw new Error('Cada foto debe ocupar como máximo ' + CONFIG.MAX_FILE_MB + ' MB.');
+  }
+  if (bytes.length === 0) throw new Error('La imagen está vacía.');
+
+  const timestamp = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyyMMdd_HHmmss');
+  const safeGuest = cleanFileName(guestName).replace(/\.[^.]+$/, '').slice(0, 50) || 'Invitado';
+  const finalName = timestamp + '_' + safeGuest + '_' + originalName;
+  const blob = Utilities.newBlob(bytes, mimeType, finalName);
+  DriveApp.getFolderById(CONFIG.DRIVE_FOLDER_ID).createFile(blob);
+
+  return { ok: true, fileName: originalName };
+}
+
+function cleanText(value, maxLength) {
+  return String(value || '').replace(/[<>\u0000-\u001f]/g, '').trim().slice(0, maxLength);
+}
+
+function cleanFileName(value) {
+  const name = String(value || 'foto').split(/[\\/]/).pop();
+  return name.replace(/[<>:"|?*\u0000-\u001f]/g, '_').trim().slice(0, 100) || 'foto';
+}
